@@ -22,12 +22,23 @@ var Flatted = (function (Primitive, primitive) {
 
     parse: function parse(text, reviver) {
       var input = JSON.parse(text, Primitives).map(primitives);
-      var value = input[0];
       var $ = reviver || noop;
-      var tmp = typeof value === 'object' && value ?
-                  revive(input, new Set, value, $) :
-                  value;
-      return $.call({'': tmp}, '', tmp);
+      var value = input[0];
+
+      if (typeof value === 'object' && value) {
+        var lazy = [];
+        var revive = resolver(input, lazy, new Set, $);
+        value = revive(value);
+
+        var i = 0;
+        while (i < lazy.length) {
+          // it could be a lazy.shift() but that's costly
+          var item = lazy[i++];
+          item.o[item.k] = $.call(item.o, item.k, revive(item.r));
+        }
+      }
+
+      return $.call({'': value}, '', value);
     },
 
     stringify: function stringify(value, replacer, space) {
@@ -72,24 +83,27 @@ var Flatted = (function (Primitive, primitive) {
     return value;
   }
 
-  function revive(input, parsed, output, $) {
-    return Object.keys(output).reduce(
-      function (output, key) {
-        var value = output[key];
-        if (value instanceof Primitive) {
-          var tmp = input[value];
-          if (typeof tmp === 'object' && !parsed.has(tmp)) {
-            parsed.add(tmp);
-            output[key] = $.call(output, key, revive(input, parsed, tmp, $));
-          } else {
-            output[key] = $.call(output, key, tmp);
-          }
-        } else
-          output[key] = $.call(output, key, value);
-        return output;
-      },
-      output
-    );
+  function resolver(input, lazy, parsed, $) {
+    return function (output) {
+      return Object.keys(output).reduce(
+        function (output, key) {
+          var value = output[key];
+          if (value instanceof Primitive) {
+            var tmp = input[+value];
+            if (typeof tmp === 'object' && !parsed.has(tmp)) {
+              parsed.add(tmp);
+              output[key] = tmp;
+              lazy.push({ o: output, k: key, r: tmp });
+            } else {
+              output[key] = $.call(output, key, tmp);
+            }
+          } else
+            output[key] = $.call(output, key, value);
+          return output;
+        },
+        output
+      );
+    };
   }
 
   function set(known, input, value) {
